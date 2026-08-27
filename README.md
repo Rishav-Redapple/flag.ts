@@ -1,7 +1,7 @@
 # flag.ts
 
 <p align="center">
-  <img src="./assets/banner.jpg" alt="flag banner" width="100%" />
+  <img src="./assets/banner.png" alt="flag banner" width="100%" />
 </p>
 
 A small, typed, unconventional command-line flag parser.
@@ -26,6 +26,7 @@ look like when you drop the dashes.
 ## Install
 
 ### 1. Drop-in single file (recommended)
+
 Simply copy [`flag.ts`](./flag.ts) into your project — zero dependencies:
 
 ```ts
@@ -33,16 +34,17 @@ import { Flag } from "./flag"
 ```
 
 ### 2. As a package
+
 ```bash
-npm install flag
+npm install Rishav-Redapple/flag.ts
 # or
-bun add flag
+bun add github:Rishav-Redapple/flag.ts
 ```
 
 ## Quick Start
 
 ```ts
-import { Flag } from 'flag'
+import { Flag } from './flag'
 
 const flag = new Flag()
 const help = flag.bool('h/help', 'show help')
@@ -127,12 +129,14 @@ flag.parse(['/q:first', '/query:second'])
 queries.value // → ["first", "second"]
 ```
 
-If a default is provided, it becomes the first element of the array:
+If a default is provided, it is used when no flags are supplied. If flags are supplied, they override the default:
 
 ```ts
 const queries = flag.string('q/query+', 'queries', 'default')
 flag.parse([])
 queries.value // → ["default"]
+flag.parse(['/q:first'])
+queries.value // → ["first"]
 ```
 
 ## Parsing
