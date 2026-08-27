@@ -1,0 +1,27 @@
+{
+  "name": "flag",
+  "type": "module",
+  "version": "0.1.0",
+  "description": "A small, typed, unconventional command-line flag parser",
+  "exports": {
+    ".": {
+      "types": "./dist/flag.d.ts",
+      "import": "./dist/flag.js"
+    }
+  },
+  "main": "./dist/flag.js",
+  "types": "./dist/flag.d.ts",
+  "files": [
+    "dist",
+    "flag.ts",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "typescript": "^5"
+  }
+}
