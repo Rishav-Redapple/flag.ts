@@ -163,6 +163,11 @@ flag.argv()
 
 Each `PositionalArg` has `pos` (the original index in argv) and `value`.
 
+Use the standard `--` delimiter to stop flag parsing. This is required if you need to pass absolute paths (like `/etc/passwd`) or literal strings starting with `/` as positional arguments:
+
+```bash
+my-tool /verbose -- /etc/passwd /tmp/file
+```
 ## Help
 
 ```ts

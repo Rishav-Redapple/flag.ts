@@ -87,4 +87,44 @@ describe('Flag', () => {
     expect(logs[2]).toContain("/count:number")
     expect(logs[3]).toContain("/q, /query:string...")
   })
+
+  test("handles multiple flag with default value properly", () => {
+    const flag = new Flag()
+    const tags = flag.string("t/tag+", "tags", "default-tag")
+
+    // When no args provided, uses default array
+    flag.parse([])
+    expect(tags.value).toEqual(["default-tag"])
+
+    // When args provided, overrides the default rather than prepending to it
+    flag.parse(["/t:one", "/tag:two"])
+    expect(tags.value).toEqual(["one", "two"])
+
+    // Resets back to default on empty parse
+    flag.parse([])
+    expect(tags.value).toEqual(["default-tag"])
+  })
+
+  test("parses negative and decimal numbers correctly", () => {
+    const flag = new Flag()
+    const temp = flag.number("temp", "temperature")
+    const ratio = flag.number("ratio", "ratio")
+
+    flag.parse(["/temp:-15.5", "/ratio:.75"])
+    expect(temp.value).toBe(-15.5)
+    expect(ratio.value).toBe(0.75)
+  })
+
+  test("stops parsing flags after --", () => {
+    const flag = new Flag()
+    const help = flag.bool("h/help", "help")
+
+    flag.parse(["/help", "--", "/etc/passwd", "/not-a-flag"])
+    
+    expect(help.value).toBe(true)
+    expect(flag.argv()).toEqual([
+      { pos: 2, value: "/etc/passwd" },
+      { pos: 3, value: "/not-a-flag" }
+    ])
+  })
 })

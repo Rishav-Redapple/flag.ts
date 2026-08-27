@@ -17,7 +17,6 @@ type FlagDef = {
   kind: Kind
   description: string
   multiple: boolean
-  required: boolean
   hasDefault: boolean
   defaultValue: unknown
   setValue: (value: unknown) => void
@@ -66,7 +65,6 @@ export class Flag {
       kind,
       description,
       multiple,
-      required: false,
       hasDefault,
       defaultValue,
       setValue: (value) => {
@@ -135,19 +133,20 @@ export class Flag {
     // Stage all results first. A malformed input must not partially update refs.
     const staged = new Map<FlagDef, unknown>()
     for (const def of this.definitions) {
-      staged.set(
-        def,
-        def.multiple
-          ? def.hasDefault
-            ? [def.defaultValue]
-            : []
-          : def.defaultValue,
-      )
+      staged.set(def, def.multiple ? [] : def.defaultValue)
     }
     const positionals: PositionalArg[] = []
-    const seen = new Set<FlagDef>()
+    let onlyPositionals = false
 
     argv.forEach((arg, pos) => {
+      if (onlyPositionals) {
+        positionals.push({ pos, value: arg })
+        return
+      }
+      if (arg === '--') {
+        onlyPositionals = true
+        return
+      }
       if (!arg.startsWith('/')) {
         positionals.push({ pos, value: arg })
         return
@@ -179,12 +178,15 @@ export class Flag {
           staged.set(def, parsed)
         }
       }
-      seen.add(def)
     })
 
     for (const def of this.definitions) {
-      if (def.required && !seen.has(def) && !def.hasDefault) {
-        throw new Error(`${def.aliases.join('/')} requires at least one value`)
+      if (
+        def.multiple &&
+        def.hasDefault &&
+        (staged.get(def) as unknown[]).length === 0
+      ) {
+        staged.set(def, [def.defaultValue])
       }
     }
 
