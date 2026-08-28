@@ -30,7 +30,7 @@ look like when you drop the dashes.
 Simply copy [`flag.ts`](./flag.ts) into your project — zero dependencies:
 
 ```ts
-import { Flag } from "./flag"
+import { Flag } from './flag'
 ```
 
 ### 2. As a package
@@ -47,22 +47,22 @@ bun add github:Rishav-Redapple/flag.ts
 import { Flag } from './flag'
 
 const flag = new Flag()
-const help = flag.bool('h/help', 'show help')
 const count = flag.number('count', 'repeat count', 1)
 const queries = flag.string('q/query+', 'search queries')
 
+flag.help(`Usage: my-tool [options] [files...]
+${flag.usage()}`)
+
 flag.parse() // defaults to process.argv.slice(2)
 
-if (help.value) flag.help('my-tool [options] [files...]')
 console.log(count.value, queries.value, flag.argv())
 ```
 
 ```bash
-my-tool /help /count:3 /q:foo /query:bar readme.md
-# help.value    → true
+my-tool /count:3 /q:foo /query:bar readme.md
 # count.value   → 3
 # queries.value → ["foo", "bar"]
-# flag.argv()   → [{ pos: 4, value: "readme.md" }]
+# flag.argv()   → [{ pos: 3, value: "readme.md" }]
 ```
 
 ## Flag Syntax
@@ -101,20 +101,21 @@ that always reflects the most recent `parse()` result.
 Flag names follow this pattern:
 
 ```
-primary/alias   → one or two aliases separated by /
+primary/alias   → one or more aliases separated by /
 name+           → collect zero or more values
 ```
 
-| Name | Aliases | Multiple |
-| --- | --- | --- |
-| `"help"` | `/help` | no |
-| `"h/help"` | `/h`, `/help` | no |
-| `"q/query+"` | `/q`, `/query` | yes |
+| Name          | Aliases              | Multiple |
+| ------------- | -------------------- | -------- |
+| `"o"`         | `/o`                 | no       |
+| `"h/help"`    | `/h`, `/help`        | no       |
+| `"n/c/count"` | `/n`, `/c`, `/count` | no       |
+| `"q/query+"`  | `/q`, `/query`       | yes      |
 
 Rules:
 
-- Names must contain only letters, digits, and hyphens (`a-z`, `0-9`, `-`).
-- At most two aliases per flag.
+- Names must contain only letters, digits, and hyphens (`a-z`, `0-9`, `-`). The `?` character is also strictly allowed for the help flag (`/?`).
+- You can provide any number of aliases separated by `/`.
 - Duplicate names are rejected.
 
 ## Multi-Value Flags
@@ -172,30 +173,42 @@ Use the standard `--` delimiter to stop flag parsing. This is required if you ne
 ```bash
 my-tool /verbose -- /etc/passwd /tmp/file
 ```
+
 ## Help
 
-```ts
-flag.help('my-tool [options] [files...]')
-```
+By default, `flag.ts` perfectly mimics Go's zero-configuration auto-help.
 
-Prints formatted usage to stdout:
+The flags `/?`, `/h`, and `/help` are automatically registered for you. If a user runs your app with any of those flags, `flag.parse()` intercepts it, automatically prints the generated table, and safely calls `process.exit(0)` without you writing a single line of code!
 
-```
-Usage: my-tool [options] [files...]
-  /h, /help             show help
+```bash
+$ my-tool /help
+Usage: my-tool
+  /?, /h, /help         show help
   /count:number         repeat count [default=1]
-  /q, /query:string...  search queries
 ```
+
+### Overriding Default Output
+
+If you want to customize the layout, simply call `flag.help(template)` before parsing. This overrides the default output:
+
+```ts
+flag.help(`Usage: my-tool [options] [files...]
+${flag.usage()}`)
+```
+
+Use `flag.usage()` inside your template string to inject the formatted, aligned flag table.
+
+_Note: Because template literals are evaluated immediately, always call `flag.help()` after defining all your flags._
 
 ## Error Handling
 
 `parse()` throws on:
 
-| Condition                   | Example                                     |
-| --------------------------- | ------------------------------------------- |
-| Unknown flag                | `/unknown`                                  |
-| Missing value               | `/count:` or `/count` (non-bool)            |
-| Invalid number              | `/count:abc`                                |
+| Condition      | Example                          |
+| -------------- | -------------------------------- |
+| Unknown flag   | `/unknown`                       |
+| Missing value  | `/count:` or `/count` (non-bool) |
+| Invalid number | `/count:abc`                     |
 
 ## API Reference
 

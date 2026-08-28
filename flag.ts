@@ -28,6 +28,11 @@ export class Flag {
   private defs = new Map<string, FlagDef>()
   private definitions: FlagDef[] = []
   private positionals: PositionalArg[] = []
+  private helpTemplate?: string
+
+  constructor() {
+    this.bool('?/h/help', 'show help')
+  }
 
   private register<Name extends string, T>(
     name: Name,
@@ -39,8 +44,8 @@ export class Flag {
     const modifier = name.endsWith('+') ? ('+' as const) : null
     const aliasText = modifier ? name.slice(0, -1) : name
     const aliases = aliasText.split('/')
-    if (aliases.length > 2 || aliases.some((alias) => alias.length === 0)) {
-      throw new Error('a flag must have one or two non-empty names')
+    if (aliases.some((alias) => alias.length === 0)) {
+      throw new Error('flag names cannot be empty')
     }
     const validAliases = aliases.map((alias) => this.validateFlagName(alias))
     for (const alias of validAliases) {
@@ -79,6 +84,7 @@ export class Flag {
   private validateFlagName(name: string): string {
     name = name.trim()
     if (name.length === 0) throw new Error('empty name found')
+    if (name === '?') return name
     if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/i.test(name)) {
       throw new Error('name must contain only letters, numbers, or hyphens')
     }
@@ -138,6 +144,8 @@ export class Flag {
     const positionals: PositionalArg[] = []
     let onlyPositionals = false
 
+    const errors: Error[] = []
+
     argv.forEach((arg, pos) => {
       if (onlyPositionals) {
         positionals.push({ pos, value: arg })
@@ -157,7 +165,10 @@ export class Flag {
       const name = separator < 0 ? raw : raw.slice(0, separator)
       const value = separator < 0 ? null : raw.slice(separator + 1)
       const def = this.defs.get(name)
-      if (!def) throw new Error(`Unknown flag: ${name}`)
+      if (!def) {
+        errors.push(new Error(`Unknown flag: ${name}`))
+        return
+      }
 
       if (def.kind === Kind.bool) {
         // Boolean flags are presence-based; /help:false is still true.
@@ -168,17 +179,41 @@ export class Flag {
           staged.set(def, true)
         }
       } else {
-        if (value === null || value.length === 0)
-          throw new Error(`${name} requires a value`)
-        const parsed = this.convert(value, def.kind)
-        if (def.multiple) {
-          const values = staged.get(def) as unknown[]
-          values.push(parsed)
-        } else {
-          staged.set(def, parsed)
+        if (value === null || value.length === 0) {
+          errors.push(new Error(`${name} requires a value`))
+          return
+        }
+        try {
+          const parsed = this.convert(value, def.kind)
+          if (def.multiple) {
+            const values = staged.get(def) as unknown[]
+            values.push(parsed)
+          } else {
+            staged.set(def, parsed)
+          }
+        } catch (err) {
+          errors.push(err as Error)
         }
       }
     })
+
+    const helpDef =
+      this.defs.get('help') || this.defs.get('h') || this.defs.get('?')
+    if (helpDef && staged.get(helpDef) === true) {
+      if (this.helpTemplate !== undefined) {
+        console.log(this.helpTemplate)
+      } else {
+        console.log(`Usage: ${this.appName()}\n${this.usage()}`)
+      }
+      if (typeof process !== 'undefined' && process.exit) {
+        process.exit(0)
+      }
+      return
+    }
+
+    if (errors.length > 0) {
+      throw errors[0]
+    }
 
     for (const def of this.definitions) {
       if (
@@ -196,11 +231,10 @@ export class Flag {
 
   private convert(value: string, kind: Kind): string | number {
     if (kind === Kind.string) return value
-    if (!/^-?(?:\d+(?:\.\d*)?|\.\d+)$/.test(value)) {
+    const number = Number(value)
+    if (!Number.isFinite(number) || value.trim() === '') {
       throw new Error(`Not a number: ${value}`)
     }
-    const number = Number(value)
-    if (!Number.isFinite(number)) throw new Error(`Not a number: ${value}`)
     return number
   }
 
@@ -208,19 +242,46 @@ export class Flag {
     return [...this.positionals]
   }
 
-  public help(usage = ''): void {
-    console.log('Usage:', usage)
+  private _appName?: string
+
+  public appName(customName?: string): string {
+    if (customName !== undefined) {
+      this._appName = customName
+      return customName
+    }
+    if (this._appName !== undefined) {
+      return this._appName
+    }
+    if (
+      typeof process === 'undefined' ||
+      !process.argv ||
+      process.argv.length < 2
+    ) {
+      return 'app'
+    }
+    const script = process.argv[1]
+    const parts = script.split(/[/\\]/)
+    return parts[parts.length - 1] || 'app'
+  }
+
+  public usage(): string {
     const left = (def: FlagDef) =>
       `/${def.aliases.join(', /')}${def.kind !== Kind.bool ? `:${def.kind}` : ''}${def.multiple ? '...' : ''}`
     const max =
       this.definitions.length === 0
         ? 0
         : Math.max(...this.definitions.map((def) => left(def).length))
-    this.definitions.forEach((def) => {
-      const suffix = def.hasDefault
-        ? ` [default=${String(def.defaultValue)}]`
-        : ''
-      console.log(`  ${left(def).padEnd(max + 2)}${def.description}${suffix}`)
-    })
+    return this.definitions
+      .map((def) => {
+        const suffix = def.hasDefault
+          ? ` [default=${String(def.defaultValue)}]`
+          : ''
+        return `  ${left(def).padEnd(max + 2)}${def.description}${suffix}`
+      })
+      .join('\n')
+  }
+
+  public help(template: string): void {
+    this.helpTemplate = template
   }
 }
