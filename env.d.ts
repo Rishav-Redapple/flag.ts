@@ -1,1 +1,6 @@
-declare var process: { argv: string[] } | undefined
+declare var process:
+  | {
+      argv: string[]
+      exit?: (code?: number) => void
+    }
+  | undefined

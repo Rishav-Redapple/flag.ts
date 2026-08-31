@@ -6,23 +6,26 @@ enum Kind {
 
 export type FlagRef<T> = { readonly value: T }
 
-type MultipleName<N extends string> = N extends `${string}${'+'}` ? true : false
+type FlagModifier<N extends string> = N extends '?' ? null : N extends `${string}+` ? '+' : N extends `${string}?` ? '?' : null;
 
 type RegisteredValue<N extends string, T> =
-  MultipleName<N> extends true ? T[] : T
+  FlagModifier<N> extends '+' ? T[] : FlagModifier<N> extends '?' ? T | undefined : T;
 
 type FlagDef = {
   aliases: string[]
-  modifier: '+' | null
+  modifier: '+' | '?' | null
   kind: Kind
   description: string
   multiple: boolean
-  hasDefault: boolean
+  optional: boolean
   defaultValue: unknown
   setValue: (value: unknown) => void
 }
 
 export type PositionalArg = { pos: number; value: string }
+
+const PREFIX = '/'
+const SEPARATOR = ':'
 
 export class Flag {
   private defs = new Map<string, FlagDef>()
@@ -31,32 +34,49 @@ export class Flag {
   private helpTemplate?: string
 
   constructor() {
-    this.bool('?/h/help', 'show help')
+    this.bool('?/h/help', false, 'show help')
   }
 
   private register<Name extends string, T>(
     name: Name,
     kind: Kind,
-    description: string,
     defaultValue: T,
-    hasDefault: boolean,
+    description: string,
   ): FlagRef<RegisteredValue<Name, T>> {
-    const modifier = name.endsWith('+') ? ('+' as const) : null
-    const aliasText = modifier ? name.slice(0, -1) : name
+    let modifier: '+' | '?' | null = null
+    let aliasText = name as string
+    if (name.endsWith('+?') || name.endsWith('?+')) {
+      throw new Error('cannot combine + and ? modifiers')
+    }
+    if (name !== '?' && name.endsWith('?')) {
+      modifier = '?'
+      aliasText = name.slice(0, -1)
+    } else if (name.endsWith('+')) {
+      modifier = '+'
+      aliasText = name.slice(0, -1)
+    }
     const aliases = aliasText.split('/')
     if (aliases.some((alias) => alias.length === 0)) {
       throw new Error('flag names cannot be empty')
     }
     const validAliases = aliases.map((alias) => this.validateFlagName(alias))
+    const uniqueAliases = new Set(validAliases)
+    if (uniqueAliases.size !== validAliases.length) {
+      throw new Error('duplicate alias in flag name')
+    }
     for (const alias of validAliases) {
       if (this.defs.has(alias)) throw new Error(`duplicate flag name: ${alias}`)
     }
-    const multiple = modifier !== null
+    const multiple = modifier === '+'
+    const optional = modifier === '?'
+    const isZero = this.isZeroValue(kind, defaultValue)
     let current: unknown = multiple
-      ? hasDefault
-        ? [defaultValue]
-        : []
-      : defaultValue
+      ? isZero
+        ? []
+        : [defaultValue]
+      : optional
+        ? undefined
+        : defaultValue
 
     const ref = {} as FlagRef<RegisteredValue<Name, T>>
     Object.defineProperty(ref, 'value', {
@@ -70,7 +90,7 @@ export class Flag {
       kind,
       description,
       multiple,
-      hasDefault,
+      optional,
       defaultValue,
       setValue: (value) => {
         current = value
@@ -91,46 +111,36 @@ export class Flag {
     return name
   }
 
+  private isZeroValue(kind: Kind, value: unknown): boolean {
+    return (
+      (kind === Kind.bool && value === false) ||
+      (kind === Kind.string && value === '') ||
+      (kind === Kind.number && value === 0)
+    )
+  }
+
   public bool<Name extends string>(
     name: Name,
+    defaultValue: boolean,
     description: string,
-    defaultValue = false,
   ) {
-    return this.register(
-      name,
-      Kind.bool,
-      description,
-      defaultValue,
-      arguments.length >= 3,
-    )
+    return this.register(name, Kind.bool, defaultValue, description)
   }
 
   public string<Name extends string>(
     name: Name,
+    defaultValue: string,
     description: string,
-    defaultValue = '',
   ) {
-    return this.register(
-      name,
-      Kind.string,
-      description,
-      defaultValue,
-      arguments.length >= 3,
-    )
+    return this.register(name, Kind.string, defaultValue, description)
   }
 
   public number<Name extends string>(
     name: Name,
+    defaultValue: number,
     description: string,
-    defaultValue = 0,
   ) {
-    return this.register(
-      name,
-      Kind.number,
-      description,
-      defaultValue,
-      arguments.length >= 3,
-    )
+    return this.register(name, Kind.number, defaultValue, description)
   }
 
   public parse(
@@ -139,7 +149,7 @@ export class Flag {
     // Stage all results first. A malformed input must not partially update refs.
     const staged = new Map<FlagDef, unknown>()
     for (const def of this.definitions) {
-      staged.set(def, def.multiple ? [] : def.defaultValue)
+      staged.set(def, def.multiple ? [] : def.optional ? undefined : def.defaultValue)
     }
     const positionals: PositionalArg[] = []
     let onlyPositionals = false
@@ -155,13 +165,13 @@ export class Flag {
         onlyPositionals = true
         return
       }
-      if (!arg.startsWith('/')) {
+      if (!arg.startsWith(PREFIX)) {
         positionals.push({ pos, value: arg })
         return
       }
 
-      const raw = arg.slice(1)
-      const separator = raw.indexOf(':')
+      const raw = arg.slice(PREFIX.length)
+      const separator = raw.indexOf(SEPARATOR)
       const name = separator < 0 ? raw : raw.slice(0, separator)
       const value = separator < 0 ? null : raw.slice(separator + 1)
       const def = this.defs.get(name)
@@ -180,6 +190,10 @@ export class Flag {
         }
       } else {
         if (value === null || value.length === 0) {
+          if (def.optional && value === null) {
+            staged.set(def, def.defaultValue)
+            return
+          }
           errors.push(new Error(`${name} requires a value`))
           return
         }
@@ -218,7 +232,7 @@ export class Flag {
     for (const def of this.definitions) {
       if (
         def.multiple &&
-        def.hasDefault &&
+        !this.isZeroValue(def.kind, def.defaultValue) &&
         (staged.get(def) as unknown[]).length === 0
       ) {
         staged.set(def, [def.defaultValue])
@@ -260,20 +274,21 @@ export class Flag {
       return 'app'
     }
     const script = process.argv[1]
+    if (!script) return 'app'
     const parts = script.split(/[/\\]/)
     return parts[parts.length - 1] || 'app'
   }
 
   public usage(): string {
     const left = (def: FlagDef) =>
-      `/${def.aliases.join(', /')}${def.kind !== Kind.bool ? `:${def.kind}` : ''}${def.multiple ? '...' : ''}`
+      `${PREFIX}${def.aliases.join(`, ${PREFIX}`)}${def.kind !== Kind.bool ? `${SEPARATOR}${def.kind}` : ''}${def.optional ? '?' : ''}${def.multiple ? '...' : ''}`
     const max =
       this.definitions.length === 0
         ? 0
         : Math.max(...this.definitions.map((def) => left(def).length))
     return this.definitions
       .map((def) => {
-        const suffix = def.hasDefault
+        const suffix = def.optional || !this.isZeroValue(def.kind, def.defaultValue)
           ? ` [default=${String(def.defaultValue)}]`
           : ''
         return `  ${left(def).padEnd(max + 2)}${def.description}${suffix}`

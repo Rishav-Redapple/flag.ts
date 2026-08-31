@@ -6,28 +6,22 @@
 
 A small, typed, unconventional command-line flag parser.
 
-Flags use a `/name:value` syntax. Aliases, multi-value collection, and
+Flags use a `/name:value` syntax by default. Aliases, multi-value collection, optional values, and
 automatic help formatting are built in. Every registered flag returns a
 reactive `FlagRef<T>` whose `.value` always reflects the latest parse result.
 
 ## Inspiration
 
 Go's standard [`flag`](https://pkg.go.dev/flag) package is beautifully minimal
-— define flags, parse, use. No decorators, no config objects, just functions
-that return pointers. When [tsoding/flag.h](https://github.com/tsoding/flag.h) proved
-the same idea works as a single C header, it felt natural to bring it to
-TypeScript: **one file, no dependencies, strongly typed.**
+— define flags with explicit names, defaults, and descriptions, parse, use. No decorators, no complex config objects, just clean functions that return pointers. When [tsoding/flag.h](https://github.com/tsoding/flag.h) proved the same idea works as a single C header, it felt natural to bring it to TypeScript: **one file, zero dependencies, strongly typed, and explicit.**
 
-The twist is the syntax. Instead of the conventional `--long` / `-s` style,
-`flag.ts` uses `/name:value` — closer to Windows and Plan 9 conventions than
-Unix. It's unconventional on purpose: a small experiment in what CLI ergonomics
-look like when you drop the dashes.
+The twist is the default syntax. Instead of the conventional `--long` / `-s` style, `flag.ts` uses `/name:value` — closer to Windows and Plan 9 conventions than Unix. It's unconventional on purpose: a small experiment in what CLI ergonomics look like when you drop the dashes. (And if you prefer `-name=value`, you can easily configure it with constants at the top of the file!)
 
 ## Install
 
 ### 1. Drop-in single file (recommended)
 
-Simply copy [`flag.ts`](./flag.ts) into your project — zero dependencies:
+Simply copy [`flag.ts`](./flag.ts) into your project — zero runtime dependencies:
 
 ```ts
 import { Flag } from './flag'
@@ -43,26 +37,46 @@ bun add github:Rishav-Redapple/flag.ts
 
 ## Quick Start
 
+Following Go's philosophy, all flag definitions take 3 explicit arguments: `(name, defaultValue, description)`.
+
 ```ts
 import { Flag } from './flag'
 
 const flag = new Flag()
-const count = flag.number('count', 'repeat count', 1)
-const queries = flag.string('q/query+', 'search queries')
+
+// 1. Boolean flag (default false)
+const verbose = flag.bool('v/verbose', false, 'enable verbose logging')
+
+// 2. Number flag (default 1)
+const count = flag.number('count', 1, 'repeat count')
+
+// 3. Multi-value flag (trailing '+') -> returns string[]
+const queries = flag.string('q/query+', '', 'search queries')
+
+// 4. Optional value flag (trailing '?') -> returns string | undefined
+const list = flag.string('l/list?', 'all', 'show list')
 
 flag.help(`Usage: my-tool [options] [files...]
 ${flag.usage()}`)
 
 flag.parse() // defaults to process.argv.slice(2)
 
-console.log(count.value, queries.value, flag.argv())
+console.log({
+  verbose: verbose.value,
+  count: count.value,
+  queries: queries.value,
+  list: list.value,
+  files: flag.argv(),
+})
 ```
 
 ```bash
-my-tool /count:3 /q:foo /query:bar readme.md
+my-tool /verbose /count:3 /q:foo /query:bar /l readme.md
+# verbose.value → true
 # count.value   → 3
 # queries.value → ["foo", "bar"]
-# flag.argv()   → [{ pos: 3, value: "readme.md" }]
+# list.value    → "all"
+# flag.argv()   → [{ pos: 5, value: "readme.md" }]
 ```
 
 ## Flag Syntax
@@ -70,92 +84,123 @@ my-tool /count:3 /q:foo /query:bar readme.md
 Flags are prefixed with `/` on the command line:
 
 ```
-/name            boolean flag (presence = true)
-/name:value      string or number flag
+/name            boolean flag (presence = true) or optional flag (takes default)
+/name:value      string or number flag (or optional flag with custom value)
 ```
 
 Arguments that don't start with `/` are collected as **positional arguments**.
 
 ## Defining Flags
 
-### `flag.bool(name, description, defaultValue?)`
+Every flag definition requires **name**, **default value**, and **description**:
 
-Register a boolean flag. The flag is `true` when present, regardless of any
-value passed (e.g. `/help:false` still results in `true`). Defaults to `false`.
+### `flag.bool(name, defaultValue, description)`
 
-### `flag.string(name, description, defaultValue?)`
+Register a boolean flag. The flag is `true` when present on the command line, regardless of any value passed (e.g. `/help:false` still results in `true`).
 
-Register a string flag. Requires a value after the `:` separator. Defaults to `""`.
+```ts
+const verbose = flag.bool('v/verbose', false, 'verbose output')
+```
 
-### `flag.number(name, description, defaultValue?)`
+### `flag.string(name, defaultValue, description)`
 
-Register a numeric flag. Requires a valid numeric value. Defaults to `0`.
+Register a string flag. Requires a value after the `:` separator.
+
+```ts
+const output = flag.string('o/output', 'dist', 'output folder')
+```
+
+### `flag.number(name, defaultValue, description)`
+
+Register a numeric flag. Requires a valid numeric value (supports integers, decimals, negative numbers, scientific notation, and hex).
+
+```ts
+const port = flag.number('p/port', 8080, 'server port')
+```
 
 ---
 
-Each method returns a `FlagRef<T>` — a read-only object with a `.value` getter
-that always reflects the most recent `parse()` result.
+Each method returns a `FlagRef<T>` — a read-only object with a `.value` getter that always reflects the most recent `parse()` result.
 
-## Name Format
+## Name Format & Modifiers
 
 Flag names follow this pattern:
 
 ```
 primary/alias   → one or more aliases separated by /
-name+           → collect zero or more values
+name+           → multi-value collection (array)
+name?           → optional value flag (can be used with or without :value)
 ```
 
-| Name          | Aliases              | Multiple |
-| ------------- | -------------------- | -------- |
-| `"o"`         | `/o`                 | no       |
-| `"h/help"`    | `/h`, `/help`        | no       |
-| `"n/c/count"` | `/n`, `/c`, `/count` | no       |
-| `"q/query+"`  | `/q`, `/query`       | yes      |
+| Name          | Aliases              | Type                  | Description                               |
+| ------------- | -------------------- | --------------------- | ----------------------------------------- |
+| `"o"`         | `/o`                 | `string`              | Single alias                              |
+| `"h/help"`    | `/h`, `/help`        | `boolean`             | Multiple aliases                          |
+| `"n/c/count"` | `/n`, `/c`, `/count` | `number`              | Multiple aliases                          |
+| `"q/query+"`  | `/q`, `/query`       | `string[]`            | Collects 0 or more values                 |
+| `"l/list?"`   | `/l`, `/list`        | `string \| undefined` | Optional value flag (`/l` or `/l:custom`) |
 
-Rules:
+### Rules
 
-- Names must contain only letters, digits, and hyphens (`a-z`, `0-9`, `-`). The `?` character is also strictly allowed for the help flag (`/?`).
-- You can provide any number of aliases separated by `/`.
-- Duplicate names are rejected.
+- Names must contain only letters, digits, and hyphens (`a-z`, `0-9`, `-`). The `?` character is also strictly allowed for the built-in help flag (`/?`).
+- Aliases are separated by `/`.
+- Modifiers (`+` or `?`) must only be placed at the very end of the full name string.
+- You cannot combine `+` and `?` modifiers (`+?` / `?+`).
+- Duplicate names or aliases (even within the same flag definition like `l/l`) are rejected.
 
-## Multi-Value Flags
+## Optional Flags (`?`)
 
-A trailing `+` on the name makes the flag collect values into an array.
-Zero or more values are accepted — if none are provided, the value defaults
-to `[]`.
+A trailing `?` on the flag name allows a flag to function as both a toggle and a value flag:
+
+- **Omitted from CLI**: Value is `undefined`.
+- **Passed without value** (`/l`): Value is the default / implicit value (e.g. `"all"`).
+- **Passed with value** (`/l:new`): Value is the provided value (`"new"`).
 
 ```ts
-const queries = flag.string('q/query+', 'queries')
+const list = flag.string('l/list?', 'all', 'show list')
+
+// CLI: (no flags) -> list.value is undefined
+// CLI: /l         -> list.value is "all"
+// CLI: /l:recent  -> list.value is "recent"
+```
+
+## Multi-Value Flags (`+`)
+
+A trailing `+` on the name collects multiple occurrences into an array:
+
+```ts
+const queries = flag.string('q/query+', '', 'search queries')
+
 flag.parse(['/q:first', '/query:second'])
 queries.value // → ["first", "second"]
 ```
 
-If a default is provided, it is used when no flags are supplied. If flags are supplied, they override the default:
+If a non-zero default is provided (e.g., `'default'`), it is used when no flags are supplied on the CLI. If flags are supplied, they override the default:
 
 ```ts
-const queries = flag.string('q/query+', 'queries', 'default')
+const tags = flag.string('t/tag+', 'general', 'tags')
+
 flag.parse([])
-queries.value // → ["default"]
-flag.parse(['/q:first'])
-queries.value // → ["first"]
+tags.value // → ["general"]
+
+flag.parse(['/t:news'])
+tags.value // → ["news"]
 ```
 
-## Parsing
+## Customizing Delimiters
+
+If you prefer traditional Unix-style flags (like `-name=value`), simply modify the constants at the top of [`flag.ts`](./flag.ts):
 
 ```ts
-flag.parse() // uses process.argv.slice(2)
-flag.parse(['/count:5', 'file.txt']) // explicit argv
+const PREFIX = '-'
+const SEPARATOR = '='
 ```
 
-Parsing is **atomic** — if any flag is malformed or unknown, no refs are
-updated. This means values from a previous successful parse remain intact.
+The parser and the auto-generated help output immediately adapt to the new delimiters.
 
-Calling `parse()` again **resets** all flags to their defaults before applying
-the new argv.
+## Positional Arguments & `--`
 
-## Positional Arguments
-
-Anything that doesn't start with `/` is a positional argument:
+Anything that doesn't start with `/` (or your configured `PREFIX`) is treated as a positional argument:
 
 ```ts
 flag.parse(['input.txt', '/verbose', 'output.txt'])
@@ -166,65 +211,63 @@ flag.argv()
 //   ]
 ```
 
-Each `PositionalArg` has `pos` (the original index in argv) and `value`.
-
-Use the standard `--` delimiter to stop flag parsing. This is required if you need to pass absolute paths (like `/etc/passwd`) or literal strings starting with `/` as positional arguments:
+Use the standard `--` delimiter to stop flag parsing. This is required if you need to pass paths or literal strings starting with `/` as positional arguments:
 
 ```bash
 my-tool /verbose -- /etc/passwd /tmp/file
 ```
 
-## Help
+## Help Output
 
-By default, `flag.ts` perfectly mimics Go's zero-configuration auto-help.
+By default, `flag.ts` mimics Go's zero-configuration auto-help:
 
-The flags `/?`, `/h`, and `/help` are automatically registered for you. If a user runs your app with any of those flags, `flag.parse()` intercepts it, automatically prints the generated table, and safely calls `process.exit(0)` without you writing a single line of code!
+1. The flags `/?`, `/h`, and `/help` are automatically registered.
+2. Passing any of these flags causes `flag.parse()` to print the usage table and safely exit `process.exit(0)`.
+3. Zero/falsy default values (`false`, `""`, `0`) are omitted from `[default=...]` to keep output concise. Only meaningful non-zero defaults and optional flags display `[default=...]`.
 
 ```bash
 $ my-tool /help
 Usage: my-tool
-  /?, /h, /help         show help
-  /count:number         repeat count [default=1]
+  /?, /h, /help        show help
+  /v, /verbose         enable verbose logging
+  /count:number        repeat count [default=1]
+  /l, /list:string?    show list [default=all]
+  /q, /query:string... search queries
 ```
 
 ### Overriding Default Output
 
-If you want to customize the layout, simply call `flag.help(template)` before parsing. This overrides the default output:
+Call `flag.help(template)` before parsing to customize the help layout:
 
 ```ts
 flag.help(`Usage: my-tool [options] [files...]
 ${flag.usage()}`)
 ```
 
-Use `flag.usage()` inside your template string to inject the formatted, aligned flag table.
+## Error Handling & Atomic Parsing
 
-_Note: Because template literals are evaluated immediately, always call `flag.help()` after defining all your flags._
-
-## Error Handling
+Parsing is **atomic** — if any flag is malformed or unknown, no flag refs are updated. Previous successful parse states remain intact.
 
 `parse()` throws on:
-
-| Condition      | Example                          |
-| -------------- | -------------------------------- |
-| Unknown flag   | `/unknown`                       |
-| Missing value  | `/count:` or `/count` (non-bool) |
-| Invalid number | `/count:abc`                     |
+- Unknown flags (`/unknown`)
+- Missing values for non-optional flags (`/count` or `/count:`)
+- Non-numeric input for number flags (`/count:abc`)
 
 ## API Reference
 
-| Export          | Type    | Description                      |
-| --------------- | ------- | -------------------------------- |
-| `Flag`          | `class` | The flag parser                  |
-| `FlagRef<T>`    | `type`  | Read-only ref with `.value: T`   |
-| `PositionalArg` | `type`  | `{ pos: number; value: string }` |
+| Export          | Type    | Description                                            |
+| --------------- | ------- | ------------------------------------------------------ |
+| `Flag`          | `class` | The flag parser instance                               |
+| `FlagRef<T>`    | `type`  | Read-only reactive ref with `.value: T`                |
+| `PositionalArg` | `type`  | `{ pos: number; value: string }`                       |
 
 ## Development
 
 ```bash
 bun install          # install dependencies
 bun run typecheck    # type-check without emitting
-bun run build        # compile to dist/
 bun test             # run tests
+bun run build        # compile to dist/
 ```
 
 ## License
